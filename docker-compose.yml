@@ -1,0 +1,10 @@
+services:
+  api:
+    build:
+      context: ./compras           # carpeta donde están src/ y el Dockerfile bueno
+      dockerfile: Dockerfile
+    container_name: compras
+    ports:
+      - "8000:8000"
+    #env_file:
+     # - .env.development
