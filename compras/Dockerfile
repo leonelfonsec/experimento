@@ -26,4 +26,4 @@ USER appuser
 
 # Arranque con Gunicorn (módulo:objeto_app)
 # - 2 workers + 4 threads es un default razonable
-CMD ["gunicorn", "src.main:app", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4"]
+CMD ["gunicorn", "src.main:app", "--bind", "0.0.0.0:8000","--access-logfile", "-"]
