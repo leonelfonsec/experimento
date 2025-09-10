@@ -28,6 +28,27 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  
+  sqs:
+    build:
+      context: ./flask-sqs          # Dockerfile y wsgi.py aquí
+      dockerfile: Dockerfile
+    image: experimento-api:latest    # etiqueta opcional de la imagen resultante
+    container_name: sqs
+    ports:
+      - "8001:8000"                  # distinto de api
+    env_file:
+      - ./flask-sqs/.env             # variables SOLO de este micro
+    volumes:
+      - ~/.aws:/root/.aws:ro         # credenciales AWS del host
+    command: >
+      gunicorn -b 0.0.0.0:8000 wsgi:app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python - << 'PY'\nimport urllib.request\nimport sys\ntry:\n  urllib.request.urlopen('http://localhost:8000/health', timeout=2)\n  sys.exit(0)\nexcept:\n  sys.exit(1)\nPY"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   pgdata:
