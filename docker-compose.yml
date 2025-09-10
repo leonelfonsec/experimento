@@ -1,24 +1,4 @@
 services:
-  api:
-    build:
-      context: ./compras
-      dockerfile: Dockerfile
-    container_name: compras
-    ports:
-      - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql+psycopg://user:password@db:5432/comprasdb
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-    # Healthcheck sin wget: usa Python estándar
-    healthcheck:
-      test: ["CMD-SHELL", "python - << 'PY'\nimport urllib.request\nimport sys\ntry:\n  urllib.request.urlopen('http://localhost:8000/health', timeout=2)\n  sys.exit(0)\nexcept:\n  sys.exit(1)\nPY"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
   sqs:
     build:
       context: ./flask-sqs          # Dockerfile y wsgi.py aquí
@@ -39,24 +19,3 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-
-  db:
-    image: postgres:16-alpine
-    container_name: compras_db
-    environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: comprasdb
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
-volumes:
-  pgdata:
