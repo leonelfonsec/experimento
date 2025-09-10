@@ -1,8 +1,8 @@
 from flask import Blueprint, request, jsonify, current_app
 
-bp = Blueprint("messages", __name__)
+bp = Blueprint("orders", __name__)
 
-@bp.post("/messages")
+@bp.post("/api/v1/orders")
 def post_message():
     data = request.get_json(silent=True) or {}
     body = data.get("body")
