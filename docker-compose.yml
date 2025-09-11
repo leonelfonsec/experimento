@@ -1,8 +1,9 @@
 services:
-  api:
+  compras:
     build:
       context: ./compras           # carpeta donde están src/ y el Dockerfile bueno
       dockerfile: Dockerfile
+    image: compras-api:latest
     container_name: compras
     ports:
       - "8000:8000"
@@ -29,11 +30,11 @@ services:
       timeout: 5s
       retries: 10
   
-  :
+  bff:
     build:
       context: ./bff          # Dockerfile y wsgi.py aquí
       dockerfile: Dockerfile
-    image: experimento-api:latest    # etiqueta opcional de la imagen resultante
+    image: experimento-bff:latest    # etiqueta opcional de la imagen resultante
     container_name: bff
     ports:
       - "8001:8000"                  # distinto de api

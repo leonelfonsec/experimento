@@ -8,4 +8,4 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 
 # Gunicorn en producción; para desarrollo puedes usar flask run
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "wsgi:app", "--workers", "2", "--threads", "4"]
+CMD ["gunicorn","wsgi:app","--bind", "0.0.0.0:8000","--workers", "2","--threads", "4","--access-logfile", "-","--error-logfile", "-","--log-level", "info","--capture-output"]
