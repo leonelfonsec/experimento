@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: db
+      POSTGRES_DB: postgres
     ports:
       - "5432:5432"
     volumes:
@@ -31,6 +31,56 @@ services:
     command: >
       gunicorn -b 0.0.0.0:8000 wsgi:app
     restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  db-init-orders:
+    image: python:3.11-slim
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      TARGET_DB: orders
+    volumes:
+      - ./orders-service/app/create_orders_db.py:/app/create_orders_db.py:ro
+    working_dir: /app
+    command: sh -lc "pip install -q 'psycopg[binary]>=3.1,<4' && python create_orders_db.py"
+    restart: "no"
+
+  orders-service:
+    build: { context: ./orders-service, dockerfile: Dockerfile }
+    command: uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
+    environment:
+      DATABASE_URL: postgresql+asyncpg://user:password@db:5432/orders
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    volumes: ["./orders-service:/code"]
+    working_dir: /code
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+      db-init-orders: { condition: service_completed_successfully }
+    ports: ["3000:3000"]
+
+  worker:
+    build:
+      context: ./orders-service
+      dockerfile: Dockerfile
+    command: celery -A app.tasks:celery worker -l INFO
+    environment:
+      DATABASE_URL: postgresql+asyncpg://user:password@db:5432/orders
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    working_dir: /code
+    volumes:
+      - ./orders-service:/code
+    depends_on: [db, redis]
 
 volumes:
   pgdata:
