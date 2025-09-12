@@ -1,29 +1,16 @@
 services:
-  compras:
-    build:
-      context: ./compras           # carpeta donde están src/ y el Dockerfile bueno
-      dockerfile: Dockerfile
-    image: compras-api:latest
-    container_name: compras
-    ports:
-      - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql+psycopg://user:password@db:5432/comprasdb
-    depends_on:
-      db:
-        condition: service_healthy
-  
   db:
     image: postgres:16-alpine
-    container_name: compras_db
+    container_name: db
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: comprasdb
+      POSTGRES_DB: db
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./bff/app/db/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -34,7 +21,6 @@ services:
     build:
       context: ./bff          # Dockerfile y wsgi.py aquí
       dockerfile: Dockerfile
-    image: experimento-bff:latest    # etiqueta opcional de la imagen resultante
     container_name: bff
     ports:
       - "8001:8000"                  # distinto de api
@@ -45,11 +31,6 @@ services:
     command: >
       gunicorn -b 0.0.0.0:8000 wsgi:app
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "python - << 'PY'\nimport urllib.request\nimport sys\ntry:\n  urllib.request.urlopen('http://localhost:8000/health', timeout=2)\n  sys.exit(0)\nexcept:\n  sys.exit(1)\nPY"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
 volumes:
   pgdata:
