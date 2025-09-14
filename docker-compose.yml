@@ -16,18 +16,18 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-  
+
   bff:
     build:
-      context: ./bff          # Dockerfile y wsgi.py aquí
+      context: ./bff
       dockerfile: Dockerfile
     container_name: bff
     ports:
-      - "8001:8000"                  # distinto de api
+      - "8001:8000"
     env_file:
-      - ./bff/.env             # variables SOLO de este micro
+      - ./bff/.env
     volumes:
-      - ~/.aws:/root/.aws:ro         # credenciales AWS del host
+      - ~/.aws:/root/.aws:ro
     command: >
       gunicorn -b 0.0.0.0:8000 wsgi:app
     restart: unless-stopped
@@ -53,7 +53,9 @@ services:
     restart: "no"
 
   orders-service:
-    build: { context: ./orders-service, dockerfile: Dockerfile }
+    build: 
+      context: ./orders-service
+      dockerfile: Dockerfile
     command: uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
     environment:
       DATABASE_URL: postgresql+asyncpg://user:password@db:5432/orders
@@ -68,7 +70,7 @@ services:
       db-init-orders: { condition: service_completed_successfully }
     ports: ["3000:3000"]
 
-  worker:
+  worker-orders:
     build:
       context: ./orders-service
       dockerfile: Dockerfile
@@ -81,6 +83,78 @@ services:
     volumes:
       - ./orders-service:/code
     depends_on: [db, redis]
+
+  localstack:
+    image: localstack/localstack:3
+    environment:
+      - SERVICES=sqs
+      - AWS_DEFAULT_REGION=us-east-1
+    ports: ["4566:4566"]
+    healthcheck:
+      test: ["CMD","bash","-c","awslocal sqs list-queues || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # ============= SQS INITIALIZATION (FIXED) =============
+  init-sqs:
+    #image: amazon/aws-cli:latest
+    image: localstack/localstack:3
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      localstack:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ./consumer-lb/app/consumer/scripts/init-sqs.sh
+        target: /init-sqs.sh
+        read_only: true
+    entrypoint: [ "bash", "-lc", "/init-sqs.sh" ]
+    restart: "no"
+
+  # ============= HAPROXY (SIMPLIFIED) =============
+  haproxy:
+    image: haproxy:2.9
+    volumes:
+      - ./app/load-balancer/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    command: ["haproxy","-W","-db","-f","/usr/local/etc/haproxy/haproxy.cfg"]
+    ports: ["8080:8080","8404:8404"]
+    depends_on:
+      - orders-service
+
+  # ============= CONSUMER (FIXED) =============
+  consumer:
+    image: python:3.12-slim
+    working_dir: /app
+    command: >
+      bash -lc "
+        pip install --no-cache-dir boto3==1.40.30 httpx==0.28.1 &&
+        python worker.py
+      "
+    volumes:
+      - ./consumer-lb/app/consumer/worker.py:/app/worker.py:ro
+    environment:
+      - AWS_REGION=us-east-1
+      - SQS_ENDPOINT=http://localstack:4566
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/orders.fifo
+      - LB_TARGET_URL=http://haproxy:8080/orders
+      - SQS_BATCH=10
+      - SQS_WAIT=20
+      - SQS_VISIBILITY=60
+      - HTTP_TIMEOUT=30
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      localstack:
+        condition: service_healthy
+      init-sqs:
+        condition: service_completed_successfully
+      haproxy:
+        condition: service_started
 
 volumes:
   pgdata:
