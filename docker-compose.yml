@@ -70,14 +70,29 @@ services:
       db-init-orders: { condition: service_completed_successfully }
     ports: ["3000:3000"]
 
+  orders-service2:
+    build: { context: ./orders-service, dockerfile: Dockerfile }
+    command: uvicorn app.main:app --host 0.0.0.0 --port 3001 --reload
+    environment:
+      DATABASE_URL: postgresql+asyncpg://user:password@db:5432/orders
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    volumes: ["./orders-service:/code"]
+    working_dir: /code
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+      db-init-orders: { condition: service_completed_successfully }
+    ports: ["3001:3001"]
+
   worker-orders:
     build:
       context: ./orders-service
       dockerfile: Dockerfile
-    command: celery -A app.tasks:celery worker -l INFO
+    command: celery -A app.tasks:celery worker -l INFO --concurrency=1 --pool=solo
     environment:
       DATABASE_URL: postgresql+asyncpg://user:password@db:5432/orders
-      CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
     working_dir: /code
     volumes:
@@ -120,7 +135,7 @@ services:
   haproxy:
     image: haproxy:2.9
     volumes:
-      - ./app/load-balancer/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+       - ./consumer-lb/app/load-balancer/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     command: ["haproxy","-W","-db","-f","/usr/local/etc/haproxy/haproxy.cfg"]
     ports: ["8080:8080","8404:8404"]
     depends_on:

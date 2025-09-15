@@ -1,5 +1,6 @@
 ﻿from fastapi import FastAPI, Header, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from app.db import get_session, Base, engine 
 from app.models import IdempotencyRequest, IdemStatus, Order, OutboxEvent
 from app.schemas import CreateOrderRequest, AcceptedResponse
@@ -36,27 +37,36 @@ async def create_order(
     key_hash = _sha256(Idempotency_Key)
     body_hash = _sha256(body.model_dump_json())
 
-    async with session.begin():                     
+    try:
+        async with session.begin():
+            idem = await session.get(IdempotencyRequest, key_hash)
+            if idem:
+                if idem.body_hash != body_hash:
+                    raise HTTPException(status_code=409, detail="Idempotency-Key ya usada con payload distinto")
+                if idem.status == IdemStatus.DONE and idem.response_body:
+                    return AcceptedResponse(request_id=key_hash, message="Ya procesado (idempotente)")
+            else:
+                # Esto puede fallar si otra instancia ya creó el registro
+                idem = IdempotencyRequest(key_hash=key_hash, body_hash=body_hash, status=IdemStatus.PENDING)
+                session.add(idem)
+
+            order = Order(customer_id=body.customer_id, items=[i.model_dump() for i in body.items])
+            session.add(order)
+            await session.flush()
+
+            evt = OutboxEvent(
+                aggregate_id=order.id,
+                type="OrderCreated",
+                payload={"order_id": str(order.id), "key_hash": key_hash},
+            )
+            session.add(evt)
+
+    except IntegrityError:
+        # Otra instancia ya procesó esta request
+        # Buscar el resultado existente
+        await session.rollback()
         idem = await session.get(IdempotencyRequest, key_hash)
-        if idem:
-            if idem.body_hash != body_hash:
-                raise HTTPException(status_code=409, detail="Idempotency-Key ya usada con payload distinto")
-            if idem.status == IdemStatus.DONE and idem.response_body:
-                return AcceptedResponse(request_id=key_hash, message="Ya procesado (idempotente)")
-        else:
-            idem = IdempotencyRequest(key_hash=key_hash, body_hash=body_hash, status=IdemStatus.PENDING)
-            session.add(idem)
-
-        order = Order(customer_id=body.customer_id, items=[i.model_dump() for i in body.items])
-        session.add(order)
-        await session.flush()
-
-        evt = OutboxEvent(
-            aggregate_id=order.id,
-            type="OrderCreated",
-            payload={"order_id": str(order.id), "key_hash": key_hash},
-        )
-        session.add(evt)
+        return AcceptedResponse(request_id=key_hash, message="Ya procesado por otra instancia")
 
     # fuera de la transacción
     celery.send_task("process_outbox_event", args=[str(evt.event_id)])

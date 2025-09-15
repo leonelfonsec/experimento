@@ -9,5 +9,8 @@ class Config:
     MESSAGE_GROUP_ID = os.getenv("MESSAGE_GROUP_ID", "grupo1")
     CONTENT_BASED_DEDUP = os.getenv("CONTENT_BASED_DEDUP", "true").lower() == "true"
 
+    # Para LocalStack
+    AWS_ENDPOINT_URL = os.getenv("AWS_ENDPOINT_URL")  # http://localhost:4566
+
     # Flask
     JSON_SORT_KEYS = False
