@@ -23,7 +23,7 @@ print(f"  BATCH: {BATCH}, WAIT: {WAIT}, VISIBILITY: {VISIBILITY}", flush=True)
 if not QUEUE_URL:
     raise SystemExit("Falta SQS_QUEUE_URL")
 
-sqs = boto3.client("sqs", region_name=REGION, endpoint_url=SQS_ENDPOINT)
+sqs = boto3.client("sqs", region_name=REGION)
 client = httpx.Client(timeout=HTTP_TIMEOUT)
 
 def deliver_to_orders(payload: dict) -> None:

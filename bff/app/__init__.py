@@ -19,7 +19,6 @@ def create_app():
         region_name=app.config["AWS_REGION"],
         queue_url=app.config["SQS_QUEUE_URL"],
         default_group_id=app.config["MESSAGE_GROUP_ID"],
-        content_based_dedup=app.config["CONTENT_BASED_DEDUP"],
-        endpoint_url=app.config.get("AWS_ENDPOINT_URL")  # ESTA LÍNEA ES NUEVA
+        content_based_dedup=app.config["CONTENT_BASED_DEDUP"]
     )
     return app
