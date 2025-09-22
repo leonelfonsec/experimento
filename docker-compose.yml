@@ -1,0 +1,145 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./bff/app/db/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bff:
+    build:
+      context: ./bff
+      dockerfile: Dockerfile
+    container_name: bff
+    ports:
+      - "8001:8000"
+    env_file:
+      - ./bff/.env
+    volumes:
+      - ~/.aws:/root/.aws:ro
+    command: >
+      gunicorn -b 0.0.0.0:8000 wsgi:app
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - redis_data:/data
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  db-init-orders:
+    image: python:3.11-slim
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TARGET_DB: orders
+    volumes:
+      - ./orders-service/app/create_orders_db.py:/app/create_orders_db.py:ro
+    working_dir: /app
+    command: sh -lc "pip install -q 'psycopg[binary]>=3.1,<4' && python create_orders_db.py"
+    restart: "no"
+
+  orders-service:
+    build: 
+      context: ./orders-service
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/orders
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+    volumes: ["./orders-service:/code"]
+    working_dir: /code
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+      db-init-orders: { condition: service_completed_successfully }
+    ports: ["3000:3000"]
+
+  orders-service2:
+    build: { context: ./orders-service, dockerfile: Dockerfile }
+    command: uvicorn app.main:app --host 0.0.0.0 --port 3001 --reload
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/orders
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+    volumes: ["./orders-service:/code"]
+    working_dir: /code
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+      db-init-orders: { condition: service_completed_successfully }
+    ports: ["3001:3001"]
+
+  worker-orders:
+    build:
+      context: ./orders-service
+      dockerfile: Dockerfile
+    command: celery -A app.tasks:celery worker -l INFO --concurrency=1 --pool=solo
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/orders
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+    working_dir: /code
+    volumes:
+      - ./orders-service:/code
+    depends_on: [db, redis]
+
+  # ============= HAPROXY =============
+  haproxy:
+    image: haproxy:2.9
+    volumes:
+       - ./consumer-lb/app/load-balancer/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    command: ["haproxy","-W","-db","-f","/usr/local/etc/haproxy/haproxy.cfg"]
+    ports: ["8080:8080","8404:8404"]
+    depends_on:
+      - orders-service
+
+  # ============= CONSUMER SQS =============
+  consumer:
+    image: python:3.12-slim
+    working_dir: /app
+    command: >
+      bash -lc "
+        pip install --no-cache-dir boto3==1.40.30 httpx==0.28.1 &&
+        python worker.py
+      "
+    volumes:
+      - ./consumer-lb/app/consumer/worker.py:/app/worker.py:ro
+      - ~/.aws:/root/.aws:ro  # Credenciales de AWS
+    environment:
+      - AWS_REGION=${AWS_REGION}
+      - SQS_QUEUE_URL=${SQS_QUEUE_URL}
+      - LB_TARGET_URL=http://haproxy:8080/orders
+      - SQS_BATCH=10
+      - SQS_WAIT=20
+      - SQS_VISIBILITY=60
+      - HTTP_TIMEOUT=30
+    depends_on:
+      haproxy:
+        condition: service_started
+
+volumes:
+  pgdata:
+  redis_data:
