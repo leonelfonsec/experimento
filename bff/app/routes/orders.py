@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, current_app
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import time
 
 bp = Blueprint("orders", __name__)
 
@@ -18,7 +19,11 @@ def post_message():
     event_id = str(uuid.uuid4())
     sqs_message = {
         "event_id": event_id,
-        "order": body
+        "order": body,
+        "timestamps": {
+            "bff_received": time.time(),
+            "sqs_sent": time.time()
+        }
     }
 
     group_id = data.get("group_id")

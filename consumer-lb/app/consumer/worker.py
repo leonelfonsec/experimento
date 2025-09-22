@@ -58,6 +58,11 @@ def handle_message(m: dict) -> bool:
         
         body = json.loads(body_raw)
         print(f"[MSG] Message body: {json.dumps(body)[:200]}...", flush=True)
+
+        if "timestamps" not in body:
+            body["timestamps"] = {}
+        body["timestamps"]["consumer_received"] = time.time()
+
     except json.JSONDecodeError as e:
         print(f"[MSG] JSON decode error: {e}", flush=True)
         return False
@@ -66,9 +71,26 @@ def handle_message(m: dict) -> bool:
     for attempt in range(2):
         try:
             print(f"[MSG] Attempt {attempt + 1}/2", flush=True)
+            
+            body["timestamps"]["orders_call_start"] = time.time()
+            
             deliver_to_orders(body)
-            print(f"[MSG] ✅ Success on attempt {attempt + 1}", flush=True)
-            return True  # OK → borrar mensaje
+            
+            # ✅ USAR ESTO como proxy del DB commit
+            body["timestamps"]["db_committed"] = time.time()
+            
+            # ✅ CALCULAR TIEMPO TOTAL
+            if "bff_received" in body["timestamps"]:
+                total_time = body["timestamps"]["db_committed"] - body["timestamps"]["bff_received"]
+                print(f"[TIMING] Total end-to-end time: {total_time*1000:.2f}ms", flush=True)
+                
+                # Timestamps detallados
+                consumer_delay = body["timestamps"]["consumer_received"] - body["timestamps"]["bff_received"]
+                orders_processing = body["timestamps"]["db_committed"] - body["timestamps"]["orders_call_start"]
+                print(f"[TIMING] BFF→SQS→Consumer: {consumer_delay*1000:.2f}ms", flush=True)
+                print(f"[TIMING] Orders Service processing: {orders_processing*1000:.2f}ms", flush=True)
+            
+            return True
         except httpx.HTTPError as e:
             print(f"[MSG] HTTP error attempt {attempt + 1}: {e}", flush=True)
             # 5xx/timeout → reintentar una vez
